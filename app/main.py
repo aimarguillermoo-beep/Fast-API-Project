@@ -1,12 +1,14 @@
 import uvicorn
-from fastapi import FastAPI, HTTPException, File, UploadFile, Depends
-from app.schemas import PostCreate, PostResponse
-from app.db import Post, create_db_and_tables, get_async_session
+from fastapi import FastAPI, HTTPException, File, UploadFile, Depends, Form
+from app.schemas import PostCreate, PostResponse, UserRead, UserCreate, UserUpdate
+from app.db import Post, User, create_db_and_tables, get_async_session
+from app.users import auth_backend, fastapi_users, current_active_user
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from contextlib import asynccontextmanager
 from app.images import imagekit
 from imagekitio.types import FileUploadResponse
+from typing import Optional
 import shutil
 import os
 import uuid
@@ -24,12 +26,46 @@ async def lifespan(app: FastAPI):
 # 2. Inicializamos FastAPI con el lifespan
 app = FastAPI(lifespan=lifespan)
 
-@app.post("/upload")
+# Routers de autenticación
+app.include_router(
+    fastapi_users.get_auth_router(auth_backend),
+    prefix="/auth/jwt",
+    tags=["auth"],
+)
+app.include_router(
+    fastapi_users.get_register_router(UserRead, UserCreate),
+    prefix="/auth",
+    tags=["auth"],
+)
+app.include_router(
+    fastapi_users.get_reset_password_router(),
+    prefix="/auth",
+    tags=["auth"],
+)
+app.include_router(
+    fastapi_users.get_verify_router(UserRead),
+    prefix="/auth",
+    tags=["auth"],
+)
+app.include_router(
+    fastapi_users.get_users_router(UserRead, UserUpdate),
+    prefix="/users",
+    tags=["users"],
+)
+
+@app.post("/upload", response_model=PostResponse)
 async def upload_file(
-    file: UploadFile = File(...),
-    caption: str = "",
+    file: UploadFile = File(..., description="Archivo de imagen a subir"),
+    caption: Optional[str] = Form(None, description="Pie de foto opcional"),
+    user: User = Depends(current_active_user),
     session: AsyncSession = Depends(get_async_session)
 ):
+    """
+    Sube un archivo a ImageKit y guarda la referencia en la base de datos.
+    Requiere autenticación.
+    """
+    if caption is None:
+        caption = ""
     temp_file_path = None
     try:
         # Todo este bloque tiene 4 espacios de sangría
@@ -51,7 +87,8 @@ async def upload_file(
                 caption=caption,
                 url=upload_result.url,
                 file_type="photo",
-                file_name=file.filename
+                file_name=file.filename,
+                user_id=str(user.id)  # Asociar al usuario logueado
             )
             session.add(nuevo_post)
             await session.commit()
@@ -69,7 +106,44 @@ async def upload_file(
             os.unlink(temp_file_path)
         await file.close()
 
-    return {"posts": post_data}
+@app.get("/feed", response_model=list[PostResponse])
+async def get_feed(session: AsyncSession = Depends(get_async_session)):
+    """Obtiene todos los posts del feed, ordenados del más reciente al más antiguo"""
+    result = await session.execute(
+        select(Post).order_by(Post.created_at.desc())
+    )
+    posts = result.scalars().all()
+    return posts
+
+@app.delete("/post/{post_id}")
+async def delete_post(
+    post_id: str,
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_async_session)
+):
+    """
+    Elimina un post de la base de datos por su ID.
+    Solo el propietario del post puede eliminarlo.
+    """
+    # Buscar el post en la base de datos
+    result = await session.execute(
+        select(Post).where(Post.id == post_id)
+    )
+    post = result.scalar_one_or_none()
+
+    # Si no existe, devolver error 404
+    if not post:
+        raise HTTPException(status_code=404, detail="Post no encontrado")
+
+    # Verificar que el usuario es el propietario
+    if post.user_id != str(user.id):
+        raise HTTPException(status_code=403, detail="No tienes permiso para eliminar este post")
+
+    # Eliminar el post
+    await session.delete(post)
+    await session.commit()
+
+    return {"message": "Post eliminado exitosamente", "id": post_id}
 
 if __name__ == "__main__":
     # Nota: reload=True solo es válido si pasas la app como string "app.main:app"
