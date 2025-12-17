@@ -1,20 +1,17 @@
 # app/images.py
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 from imagekitio import ImageKit
 
-load_dotenv()
+# Load .env from the app directory
+env_path = Path(__file__).parent / '.env'
+load_dotenv(dotenv_path=env_path)
 
-# 1. Creamos la instancia totalmente vacía
-# Úsalo SOLO si el código anterior falla
+# Initialize ImageKit with the new v5.0.0 API
+# Note: v5.0.0 uses the default base_url (https://api.imagekit.io)
+# Only private_key is needed for initialization
+# public_key is passed as a parameter to upload() method
 imagekit = ImageKit(
-    os.getenv("IMAGEKIT_PUBLIC_KEY"),
-    os.getenv("IMAGEKIT_PRIVATE_KEY"),
-    os.getenv("IMAGEKIT_URL")
+    private_key=os.getenv("IMAGEKIT_PRIVATE_KEY")
 )
-
-# 2. FORZADO: Si el error persiste, usa este bloque que asigna directo a la config:
-# Dejamos esto como respaldo por si tu versión es muy estricta
-# imagekit.ik_parameter.public_key = os.getenv("IMAGEKIT_PUBLIC_KEY")
-# imagekit.ik_parameter.private_key = os.getenv("IMAGEKIT_PRIVATE_KEY")
-# imagekit.ik_parameter.url_endpoint = os.getenv("IMAGEKIT_URL")

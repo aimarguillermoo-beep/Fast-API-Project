@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from contextlib import asynccontextmanager
 from app.images import imagekit
-from imagekitio.models.upload_file_response import UploadFileResponse
+from imagekitio.types import FileUploadResponse
 import shutil
 import os
 import uuid
@@ -39,13 +39,11 @@ async def upload_file(
             shutil.copyfileobj(file.file, temp_file)
 
         with open(temp_file_path, "rb") as img_file:
-            upload_result = imagekit.upload_file(
+            upload_result = imagekit.files.upload(
                 file=img_file,
                 file_name=file.filename,
-                options={
-                    "use_unique_file_name": True,
-                    "tags": ["backend_upload"]
-                }
+                use_unique_file_name=True,
+                tags=["backend_upload"]
             )
 
         if upload_result and hasattr(upload_result, 'url'):
